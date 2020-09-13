@@ -1,0 +1,317 @@
+
+
+## Group  Members
+
+- Yonas Menghis Berhe (yonix500@gmail.com)
+- Micheal Lucky (smgmol56@gmail.com)
+- Boluwatife Adeyeye (adeyeyebolu027@gmail.com)
+- Muhammed Jamiu Saka (sakasim_jay@yahoo.com)
+- Sola-Aremu Oluwapelumi (solaaremu.pelumi@gmail.com)
+
+## Pairs Algorithimic Trading strategy
+
+Pairs trading is a popular investment trading strategy dated back to the 1980s and has been adopted by organizations since then. It was created when the first quants in wall street were looking for principles based on statistics which can be used to take advantage of short-run differences in the prices of two assets with similar characteristics which have had consistent long-run equilibrium overtime. Basically, it works by matching an asset having a long position with another asset having a short position bearing in mind that both assets have high correlation. When this principle of correlation is in place over a period of time and a correlation discrepancy is noticed, the pairs trade can be deployed. When this discrepancy comes into play, the pairs trader would purchase the asset matched in the long position when it underperforms and then sell the asset matched in the short position when it outperforms. The trader then makes his profit afterwards when the prices converge.  Therefore, pairs trading can be seen as both a hedging and speculation instrument nevertheless, it has its own limitations. 
+
+### Steps taken in Pairs Trading are as follows
+
+### Loading necessary packages
+
+```{r}
+library(Quandl)
+library(quantmod)
+library(timeSeries)
+library(corrplot)
+library(ggplot2)
+library(urca)
+library(PerformanceAnalytics)
+library(tseries)
+#install.packages("doParallel")
+library(doParallel)
+library(foreach)
+library(urca)
+
+
+```
+
+
+### Johnsen cointegration test of selected stocks
+
+```{r}
+
+ jtest <- function(t1, t2) {
+  start <- st_date
+  getSymbols(t1, from = start)
+  getSymbols(t2, from = start)
+  j <- summary(ca.jo(cbind(get(t1)[, 6], get(t2)[, 6])))
+  r <- data.frame(stock1 = t1, stock2 = t2, stat = j@teststat[2])
+  r[, c("pct10", "pct5", "pct1")] <- j@cval[2, ]
+  return(r)
+}
+ 
+pair <- function(lst) {
+  d2 <- data.frame(t(combn(lst, 2)))
+  stat <- foreach(i = 1:nrow(d2), .combine = rbind) %dopar% jtest(as.character(d2[i, 1]), as.character(d2[i, 2]))
+  stat <- stat[order(-stat$stat), ]
+  rownames(stat) <- NULL
+  return(stat)
+}
+ 
+st_date <- "2010-01-01"
+tickers <- c('AAPL', 'ADBE', 'COKE', 'CSCO', 'GOOG', 'IBM', 'INTC', 'MSFT', 'NFLX','PEP', 'SPY', 'TSCO')
+pair(tickers)
+
+```
+
+These cointegration test are sorted in descending oder in comparrsoin to the p-values of different levels.
+We have several candidate of stock pairs for modeling buildig such as:
+
+ADBE/INTC
+MSFT/SPY
+INTC/MSFT
+
+For this project we will be using Microsoft and Intel Corp stocks as pairs for our model.
+
+
+
+### Getting time series data
+
+```{r}
+getSymbols("MSFT",src="yahoo")
+getSymbols("INTC",src="yahoo")
+
+MSFT<- MSFT[,"MSFT.Close"]
+INTC<- INTC[,"INTC.Close"]
+
+Price_Data <- cbind(MSFT,INTC)
+plot(Price_Data)
+```
+
+
+### Getting the desired time period
+
+The time period selected to test the model will be the period from 2017 to 2020. 
+
+```{r}
+start_date <- "2017-01-01"
+end_date <- "2020-01-01"
+
+MSFT <- MSFT[(index(MSFT) >= start_date & index(MSFT) <= end_date)]
+INTC <- INTC[(index(INTC) >= start_date& index(INTC) <= end_date)]
+
+```
+
+### Checking for missing data Calculating Daily returns
+
+Incase of missing data the function "locf" will fill it with the previosly observed data 
+after that we proceed to calculating the daily returns
+
+```{r}
+MSFT <- na.locf(MSFT)
+INTC <- na.locf(INTC)
+
+MSFT_ret <- Delt(MSFT, k=1)
+INTC_ret <- Delt(INTC, k=1)
+
+```
+
+
+### Normalization of prices and returns
+
+Next we need to normalize the data of the stocks first and then check the distance between them and check their movement and correlation. In order to determine the normalized price for both the stocks we can use by taking the cumlative product of stock prices or we can divide the stock prices by the first day price. we have done applied the former to the daily returns and the latter to the prices. Then we plot the normalized price for both the stocks to visualize the normalized price
+
+```{r}
+MSFT_ret <- round(MSFT_ret+1, 4)
+MSFT_ret[1] <- 1
+MSFT_retnorm <- cumprod(MSFT_ret)
+plot(MSFT_retnorm)
+
+
+INTC_ret <- round(INTC_ret+1, 4)
+INTC_ret[1] <- 1
+INTC_retnorm <- cumprod(INTC_ret)
+plot(INTC_retnorm)
+
+
+Normalized_returns <- cbind(MSFT_retnorm, INTC_retnorm)
+plot(Normalized_returns)
+
+
+
+MSFT_ts <- xts(MSFT)
+MSFT_norm_pr <-  MSFT_ts/MSFT_ts[[1]]
+
+INTC_ts <- xts(INTC)
+INTC_norm_pr <-  INTC_ts/INTC_ts[[1]]
+
+Normalized_prices <- cbind(MSFT_norm_pr,INTC_norm_pr)
+plot(Normalized_prices)
+
+```
+
+As we can see both prices as well as the returs tends to move together most of the time.
+
+
+
+
+### Calculating the spread of the returns and check the stationarity
+
+We move to calculating the Spread which is the residual of the pairs movements in this case and try to validate the hypothesis that it follows stationary process.
+
+```{r}
+Spread <- MSFT_ret - INTC_ret
+plot(Spread)
+
+adf.test(Spread)
+```
+
+According to the visual inspection and ADF test the spread follows a stationary process except few moments of high volatility. 
+
+
+
+### Calculating the Z-score
+
+After we confirm that the Spread follows stationry process we move to calculating the Z-score or standardizing and normalizing of the spread using its mean and standard deviation for 10 day average. 
+
+First we obtaing the rollling mean and standard deviation for 10 days. then obtain the Z-score by dividing the diffrencing of each values of the spread from the mean by the standard deviation.
+
+```{r}
+mean_dynamic <- rollapply(Spread, 10, mean)
+std_dynamic <-  rollapply(Spread, 10, sd)
+
+Z_spread <- (Spread - mean_dynamic)/std_dynamic
+```
+
+
+### Generating signal
+
+The idea behind the signal genrating process is to enter and exit the trading with comparison of the z-score and the  bounding by critical values. This critical values are calculated from the mean and standard devitation of the spread.
+The logic of the critical values are as follows
+
+```{r}
+# Critical value calculations
+
+enter_short <- mean_dynamic + 3*std_dynamic # sell short
+enter_long <- mean_dynamic - 3*std_dynamic # long buy
+
+exit_short <- mean_dynamic - 1*std_dynamic # do nothing
+exit_long <- mean_dynamic + 1*std_dynamic # do nothing
+
+
+signal <- ifelse(Z_spread <= enter_long,1, ifelse(Z_spread >= enter_short,-1, ifelse(Z_spread >= exit_long ,0, ifelse(Z_spread <= exit_short,0,0))))
+
+
+```
+
+
+## Making the Final tabel and merging the important data in one data frame
+
+Since we are working with Closing prices, therefore we can act (BUY or SELL) on our signal next day only. So our return will depend on the return for the period next to that of the signal. Hence, we’ll use the lag function to calculate the return of this strategy
+
+
+```{r}
+
+trade_returns = lag(signal)*Spread
+Output = merge(Spread, signal, trade_returns)
+
+head(Output, 20)
+
+
+```
+
+
+### Evaluate our model with Performace Analytics
+
+
+```{r}
+summary(as.ts(trade_returns))
+
+charts.PerformanceSummary(trade_returns)
+
+Return.cumulative(trade_returns) 
+Return.annualized(trade_returns) 
+maxDrawdown(trade_returns) 
+SharpeRatio(trade_returns, Rf = 0, p=0.95, FUN = "StdDev") 
+SharpeRatio.annualized(trade_returns, Rf = 0)
+```
+
+From the performance analytics summary above we can observe that the the cumulative return at the end of December 2019 is almost at 80%. 
+The strategy seems very risky with several drops in trades and a maximum drop down of 25%. Other metrics includes 
+
+Annualized return  = 22%
+
+Sharpe ratio = 6.2%
+
+Annualized Sharpe ratio = 97%
+
+our model shows high cumulative refund but it is very risky according to the annualized sharp ratio.
+
+
+
+
+## Buy and Hold strategy for Benchmarking Comparison
+
+We are using this stratedy to compare beween the above statistical mean reversing arbitrage model and holding the assest for longer time.
+Buy and Hold. The idea is that we buy a certain asset and do not do anything for the entire duration of the investment horizon. So at the first possible date, we buy as much stock as we can with our capital and do nothing later.This simple strategy can also be considered a benchmark for more advanced onesbecause there is no point in using a very complex strategy that generates less money than buying once and doing nothing.
+
+```{r}
+# To calculate the benchmark data we hold the returs of both assets in equal weights in the same time period.
+
+MSFT_ret <- Delt(MSFT, k=1)
+INTC_ret <- Delt(INTC, k=1)
+
+
+Buy_Hold <- (MSFT_ret + INTC_ret)/2
+
+plot(Buy_Hold)
+
+
+
+```
+
+```{r}
+summary(as.ts(Buy_Hold))
+
+charts.PerformanceSummary(Buy_Hold)
+
+Return.cumulative(Buy_Hold) 
+Return.annualized(Buy_Hold) 
+maxDrawdown(Buy_Hold) 
+SharpeRatio(Buy_Hold, Rf = 0, p=0.95, FUN = "StdDev") 
+SharpeRatio.annualized(Buy_Hold, Rf = 0)
+```
+
+The buy and hold model shows that higher cumulative return than the co-integration arbitrage model but it tend to have lower annualized returns and much higher risk. 
+
+Annualized return  = 27%
+
+Max drawdown = 16%
+
+Sharpe ratio = 7.8%
+
+Annualized Sharpe ratio = 127%
+
+
+with this resuts ints much better to use the buy and hold one  than the statistcal arbitrage model we developed.
+
+
+### Improving the algorithmic trading strategy 
+
+Our model seems to have almost similar resluts to the benchmark model, several improvments could be made to construct a better model in the future.
+
+Using highly correlated stocks as example, if the price of the stocks don’t revert back to their expected mean position, it is advisable to shift your trade bias at an intraday level to a more long or more short position in order to take advantage of the latest market trend. It is also advisable to watch out for cointegration and not just correlation because pair stocks could have divergent trend over long periods and still appear to be correlated.
+
+
+Trading volumes can be used to monitor the demand of assets and can in turn be used to identify irregular changes that can affect the relationship between the assets that make up the pair.  According to Engelberg, Gao and Jagannathan (2009) it’s expected that if a common shock exists then a volume increase will occur in both assets and if that shock only affects one of the assets then the volume increase will be confined to an increase in the respective assets volume
+
+Adding transaction costs and fees into the equation and using data from twitter for sentimental anlysis could also provide invaluabel insights for trading strategies  
+
+The above mentioned adjustment can greatly improve andgenerate extensive set of criterias for our signals and allow as to execute more reliable trades.
+
+
+
+### Conclusion 
+
+In conclusion, in this project we implemented, Cointegration based pairs trading with MSFT/INTC pair. the model is viable for automated trading, and outperforms the benchmark. However, we can see that the strategy is very risky, with large drawdowns, but also with high returns.Thus we believe this model could improve when augumented with additonal data, account for trasanctional costs and coule be part of a protofilio to improve the overall performance of the portofolio returns.
+
+
+
